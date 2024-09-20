@@ -27,6 +27,22 @@ type ChainConfig struct {
 	Genesis      GenesisAllocation
 }
 
+// P2PConfig holds network parameters.
+type P2PConfig struct {
+	ListenAddr string   // e.g. ":3030"
+	Seeds      []string // bootstrap peers
+	MaxPeers   int
+}
+
+// DefaultP2PConfig returns default P2P config (no seeds; add via flag or config file).
+func DefaultP2PConfig() *P2PConfig {
+	return &P2PConfig{
+		ListenAddr: ":3030",
+		Seeds:      nil,
+		MaxPeers:   50,
+	}
+}
+
 // Well-known genesis address hexes (40 hex chars = 20 bytes).
 const (
 	TreasuryAddrHex     = "0000000000000000000000000000000000000001"

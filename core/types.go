@@ -112,3 +112,15 @@ func NewBlock(height uint64, prevHash crypto.Hash, validator crypto.Address, txs
 	b.SetHash()
 	return b
 }
+
+// ValidateBlock checks block hash and Merkle root.
+func (b *Block) ValidateBlock() bool {
+	hashes := make([]crypto.Hash, len(b.Transactions))
+	for i := range b.Transactions {
+		hashes[i] = b.Transactions[i].TxHash()
+	}
+	if crypto.MerkleRoot(hashes) != b.MerkleRoot {
+		return false
+	}
+	return b.BlockHash() == b.Hash
+}

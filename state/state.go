@@ -183,3 +183,79 @@ func (s *State) getNonceLocked(addr crypto.Address) (uint64, error) {
 	}
 	return binary.BigEndian.Uint64(val), nil
 }
+
+// ResetAndReplay clears state, applies genesis, then applies blocks in order (for reorg).
+func (s *State) ResetAndReplay(allocation config.GenesisAllocation, blocks []*core.Block) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Clear all balance/nonce keys by iterating (LevelDB has no clear; we iterate and delete)
+	iter := s.db.NewIterator(nil, nil)
+	batch := new(leveldb.Batch)
+	for iter.Next() {
+		batch.Delete(iter.Key())
+	}
+	iter.Release()
+	if err := s.db.Write(batch, nil); err != nil {
+		return err
+	}
+	if err := s.applyGenesisLocked(allocation); err != nil {
+		return err
+	}
+	for _, b := range blocks {
+		if err := s.applyBlockLocked(b); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *State) applyGenesisLocked(allocation config.GenesisAllocation) error {
+	batch := new(leveldb.Batch)
+	for addrHex, amount := range allocation {
+		b, err := hex.DecodeString(addrHex)
+		if err != nil || len(b) != crypto.AddressSize {
+			continue
+		}
+		var addr crypto.Address
+		copy(addr[:], b)
+		setBalance(batch, addr, amount)
+		setNonce(batch, addr, 0)
+	}
+	return s.db.Write(batch, nil)
+}
+
+func (s *State) applyBlockLocked(b *core.Block) error {
+	balances := make(map[crypto.Address]uint64)
+	nonces := make(map[crypto.Address]uint64)
+	for i := range b.Transactions {
+		tx := &b.Transactions[i]
+		if _, ok := balances[tx.From]; !ok {
+			bal, _ := s.getBalanceLocked(tx.From)
+			balances[tx.From] = bal
+			nonce, _ := s.getNonceLocked(tx.From)
+			nonces[tx.From] = nonce
+		}
+		if _, ok := balances[tx.To]; !ok {
+			bal, _ := s.getBalanceLocked(tx.To)
+			balances[tx.To] = bal
+		}
+	}
+	for i := range b.Transactions {
+		tx := &b.Transactions[i]
+		total := tx.Amount + tx.Fee
+		if balances[tx.From] < total {
+			continue
+		}
+		balances[tx.From] -= total
+		nonces[tx.From]++
+		balances[tx.To] += tx.Amount
+	}
+	batch := new(leveldb.Batch)
+	for addr, bal := range balances {
+		setBalance(batch, addr, bal)
+	}
+	for addr, n := range nonces {
+		setNonce(batch, addr, n)
+	}
+	return s.db.Write(batch, nil)
+}

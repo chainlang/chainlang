@@ -149,3 +149,79 @@ func (c *Chain) LastBlock() (*Block, error) {
 
 // Config returns the chain config.
 func (c *Chain) Config() *config.ChainConfig { return c.cfg }
+
+// HasBlock returns true if we have the block by hash.
+func (c *Chain) HasBlock(h crypto.Hash) bool {
+	_, err := c.GetBlock(h)
+	return err == nil
+}
+
+// GetBlocksFrom returns up to max blocks starting at fromHeight (in order).
+func (c *Chain) GetBlocksFrom(fromHeight uint64, max int) ([]*Block, error) {
+	if max <= 0 {
+		max = 10000
+	}
+	c.mu.RLock()
+	tipHash := c.LastHash
+	height := c.Height
+	c.mu.RUnlock()
+	if tipHash.IsZero() || height < fromHeight {
+		return nil, nil
+	}
+	// Walk from tip back to fromHeight to collect hashes
+	var hashes []crypto.Hash
+	h := tipHash
+	for {
+		b, err := c.GetBlock(h)
+		if err != nil {
+			return nil, err
+		}
+		if b.Height < fromHeight {
+			break
+		}
+		hashes = append(hashes, h)
+		if b.Height == fromHeight || b.PreviousHash.IsZero() {
+			break
+		}
+		h = b.PreviousHash
+	}
+	// Reverse and load blocks
+	if len(hashes) > max {
+		hashes = hashes[len(hashes)-max:]
+	}
+	out := make([]*Block, 0, len(hashes))
+	for i := len(hashes) - 1; i >= 0; i-- {
+		b, err := c.GetBlock(hashes[i])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, nil
+}
+
+// SetTip updates chain tip to the given block (for reorg). Block must already be on disk.
+func (c *Chain) SetTip(b *Block) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Height = b.Height
+	c.LastHash = b.Hash
+	return c.Save()
+}
+
+// WriteBlock persists a block without updating tip (for sync/reorg).
+func (c *Chain) WriteBlock(b *Block) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	path := filepath.Join(c.dir, blocksDir, b.Hash.Hex()+".json")
+	data, err := json.MarshalIndent(b, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
+// BlocksFromGenesisToTip returns ordered blocks from genesis to current tip (for reorg replay).
+func (c *Chain) BlocksFromGenesisToTip() ([]*Block, error) {
+	return c.GetBlocksFrom(0, 0)
+}
