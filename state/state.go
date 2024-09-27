@@ -264,8 +264,12 @@ func (s *State) ApplyBlock(b *core.Block) error {
 		balances[tx.To] += tx.Amount
 	}
 	if totalFees > 0 {
-		bal, _ := s.getBalanceLocked(b.ValidatorAddress)
-		balances[b.ValidatorAddress] = bal + totalFees
+		// Use balance after txs (from map), not initial DB balance
+		if _, ok := balances[b.ValidatorAddress]; !ok {
+			bal, _ := s.getBalanceLocked(b.ValidatorAddress)
+			balances[b.ValidatorAddress] = bal
+		}
+		balances[b.ValidatorAddress] += totalFees
 	}
 	batch := new(leveldb.Batch)
 	for addr, bal := range balances {
@@ -384,8 +388,11 @@ func (s *State) applyBlockLocked(b *core.Block) error {
 		balances[tx.To] += tx.Amount
 	}
 	if totalFees > 0 {
-		bal, _ := s.getBalanceLocked(b.ValidatorAddress)
-		balances[b.ValidatorAddress] = bal + totalFees
+		if _, ok := balances[b.ValidatorAddress]; !ok {
+			bal, _ := s.getBalanceLocked(b.ValidatorAddress)
+			balances[b.ValidatorAddress] = bal
+		}
+		balances[b.ValidatorAddress] += totalFees
 	}
 	batch := new(leveldb.Batch)
 	for addr, bal := range balances {
