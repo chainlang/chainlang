@@ -103,7 +103,7 @@ func (c *Chain) GetBlock(h crypto.Hash) (*Block, error) {
 
 // GetGenesis returns the genesis block from genesis.json if present.
 func (c *Chain) GetGenesis() (*Block, error) {
-	g, _, err := LoadGenesisFromFile(c.dir)
+	g, _, _, err := LoadGenesisFromFile(c.dir)
 	return g, err
 }
 

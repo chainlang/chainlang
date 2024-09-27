@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"hanticoin/config"
+	"hanticoin/consensus"
 	"hanticoin/core"
 	"hanticoin/crypto"
 	"hanticoin/mempool"
@@ -94,7 +95,8 @@ func runInit(dataDir string) error {
 		return err
 	}
 	cfg := config.DefaultChainConfig()
-	if err := core.WriteGenesisFile(dataDir, cfg, validatorAddr); err != nil {
+	genesisValidators := []config.ValidatorGenesis{{Address: validatorAddr.Hex(), Stake: config.MinStake}}
+	if err := core.WriteGenesisFile(dataDir, cfg, validatorAddr, genesisValidators); err != nil {
 		return err
 	}
 	st, err := state.Open(filepath.Join(dataDir, stateDir), cfg)
@@ -102,11 +104,11 @@ func runInit(dataDir string) error {
 		return err
 	}
 	defer st.Close()
-	_, allocation, err := core.LoadGenesisFromFile(dataDir)
+	_, allocation, validators, err := core.LoadGenesisFromFile(dataDir)
 	if err != nil {
 		return err
 	}
-	if err := st.ApplyGenesis(allocation); err != nil {
+	if err := st.ApplyGenesis(allocation, validators); err != nil {
 		return err
 	}
 	chain, err := core.NewChain(dataDir, cfg)
@@ -126,7 +128,7 @@ func runNodeLoop(dataDir, p2pListen string, seeds []string) error {
 	if err != nil {
 		return err
 	}
-	_, allocation, err := core.LoadGenesisFromFile(dataDir)
+	_, allocation, validators, err := core.LoadGenesisFromFile(dataDir)
 	if err != nil {
 		return fmt.Errorf("no genesis found: run with -init first: %w", err)
 	}
@@ -136,11 +138,11 @@ func runNodeLoop(dataDir, p2pListen string, seeds []string) error {
 		if err != nil {
 			return err
 		}
-		if err := st.ApplyGenesis(allocation); err != nil {
+		if err := st.ApplyGenesis(allocation, validators); err != nil {
 			st.Close()
 			return err
 		}
-		genesis, _, _ := core.LoadGenesisFromFile(dataDir)
+		genesis, _, _, _ := core.LoadGenesisFromFile(dataDir)
 		if err := chain.AppendBlock(genesis); err != nil {
 			st.Close()
 			return err
@@ -160,7 +162,7 @@ func runNodeLoop(dataDir, p2pListen string, seeds []string) error {
 	validatorAddr := crypto.PubkeyToAddress(&priv.PublicKey)
 
 	// P2P: genesis hash for hello
-	genesis, _, _ := core.LoadGenesisFromFile(dataDir)
+	genesis, _, _, _ := core.LoadGenesisFromFile(dataDir)
 	genesisHash := genesis.Hash
 	getHeight := func() uint64 {
 		last, _ := chain.LastBlock()
@@ -171,7 +173,20 @@ func runNodeLoop(dataDir, p2pListen string, seeds []string) error {
 	}
 	p2pSrv := p2p.NewServer(p2pListen, genesisHash, getHeight)
 	peerSet := p2p.NewPeerSet(50, seeds, p2pListen)
-	var blockMu sync.Mutex // serialize block apply from network and producer
+	var blockMu sync.Mutex
+	getValidatorSet := func() *consensus.Set {
+		list, err := st.GetValidatorSet()
+		if err != nil || len(list) == 0 {
+			return nil
+		}
+		conv := make([]consensus.Validator, len(list))
+		for i := range list {
+			conv[i] = consensus.Validator{Address: list[i].Address, Stake: list[i].Stake}
+		}
+		return consensus.NewSetFromValidators(conv)
+	}
+	doubleSignCheck := make(map[uint64]map[string]string)
+	var doubleSignMu sync.Mutex
 	var onConn func(*p2p.Conn, string)
 	onConn = func(c *p2p.Conn, remote string) {
 		if !peerSet.AddPeer(c, remote, nil) {
@@ -211,10 +226,26 @@ func runNodeLoop(dataDir, p2pListen string, seeds []string) error {
 				last, _ := chain.LastBlock()
 				// Check if first block extends our tip
 				if last != nil && body.Blocks[0].PreviousHash == last.Hash {
+					set := getValidatorSet()
 					for _, b := range body.Blocks {
 						if !b.ValidateBlock() || chain.HasBlock(b.Hash) {
 							continue
 						}
+						if set != nil && !set.VerifyBlockValidator(b) {
+							continue
+						}
+						doubleSignMu.Lock()
+						key := b.ValidatorAddress.Hex()
+						if doubleSignCheck[b.Height] == nil {
+							doubleSignCheck[b.Height] = make(map[string]string)
+						}
+						if prev, ok := doubleSignCheck[b.Height][key]; ok && prev != b.Hash.Hex() {
+							doubleSignMu.Unlock()
+							_ = st.SlashValidator(b.ValidatorAddress)
+							continue
+						}
+						doubleSignCheck[b.Height][key] = b.Hash.Hex()
+						doubleSignMu.Unlock()
 						cur, _ := chain.LastBlock()
 						if cur != nil && b.PreviousHash != cur.Hash {
 							break
@@ -238,7 +269,7 @@ func runNodeLoop(dataDir, p2pListen string, seeds []string) error {
 							break
 						}
 						if cur == nil && b.Height == 0 {
-							_ = st.ApplyGenesis(allocation)
+							_ = st.ApplyGenesis(allocation, validators)
 						}
 						_ = chain.WriteBlock(b)
 						if err := st.ApplyBlock(b); err != nil {
@@ -261,7 +292,7 @@ func runNodeLoop(dataDir, p2pListen string, seeds []string) error {
 							for _, b := range blocks {
 								_ = chain.WriteBlock(b)
 							}
-							if err := st.ResetAndReplay(allocation, blocks); err == nil {
+							if err := st.ResetAndReplay(allocation, validators, blocks); err == nil {
 								_ = chain.SetTip(blocks[len(blocks)-1])
 								for _, b := range blocks {
 									pool.Remove(b.Transactions)
@@ -280,7 +311,21 @@ func runNodeLoop(dataDir, p2pListen string, seeds []string) error {
 					continue
 				}
 				blockMu.Lock()
-				if b.ValidateBlock() && !chain.HasBlock(b.Hash) {
+				set := getValidatorSet()
+				if b.ValidateBlock() && !chain.HasBlock(b.Hash) && (set == nil || set.VerifyBlockValidator(&b)) {
+					doubleSignMu.Lock()
+					key := b.ValidatorAddress.Hex()
+					if doubleSignCheck[b.Height] == nil {
+						doubleSignCheck[b.Height] = make(map[string]string)
+					}
+					if prev, ok := doubleSignCheck[b.Height][key]; ok && prev != b.Hash.Hex() {
+						doubleSignMu.Unlock()
+						_ = st.SlashValidator(b.ValidatorAddress)
+						blockMu.Unlock()
+						continue
+					}
+					doubleSignCheck[b.Height][key] = b.Hash.Hex()
+					doubleSignMu.Unlock()
 					last, _ := chain.LastBlock()
 					if last != nil && b.PreviousHash == last.Hash {
 						_ = chain.WriteBlock(&b)
@@ -388,13 +433,18 @@ func runNodeLoop(dataDir, p2pListen string, seeds []string) error {
 		}
 	}()
 
-	// Block producer loop
+	// Block producer loop (only produce when we're the validator for next height)
 	ticker := time.NewTicker(time.Duration(config.BlockTimeTargetSeconds) * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
 		blockMu.Lock()
 		last, err := chain.LastBlock()
 		if err != nil || last == nil {
+			blockMu.Unlock()
+			continue
+		}
+		set := getValidatorSet()
+		if set != nil && set.ValidatorForHeight(last.Height+1) != validatorAddr {
 			blockMu.Unlock()
 			continue
 		}
@@ -444,7 +494,7 @@ func runInitJoin(dataDir, joinDir string) error {
 		return err
 	}
 	cfg := config.DefaultChainConfig()
-	_, allocation, err := core.LoadGenesisFromFile(dataDir)
+	_, allocation, validators, err := core.LoadGenesisFromFile(dataDir)
 	if err != nil {
 		return err
 	}
@@ -460,14 +510,14 @@ func runInitJoin(dataDir, joinDir string) error {
 		return err
 	}
 	defer st.Close()
-	if err := st.ApplyGenesis(allocation); err != nil {
+	if err := st.ApplyGenesis(allocation, validators); err != nil {
 		return err
 	}
 	chain, err := core.NewChain(dataDir, cfg)
 	if err != nil {
 		return err
 	}
-	genesis, _, _ := core.LoadGenesisFromFile(dataDir)
+	genesis, _, _, _ := core.LoadGenesisFromFile(dataDir)
 	if err := chain.AppendBlock(genesis); err != nil {
 		return err
 	}

@@ -3,6 +3,7 @@ package state
 import (
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"sync"
 
 	"hanticoin/config"
@@ -13,8 +14,10 @@ import (
 )
 
 const (
-	prefixBalance = "b:"
-	prefixNonce   = "n:"
+	prefixBalance    = "b:"
+	prefixNonce      = "n:"
+	keyValidatorList = "validator_list"
+	prefixValidator  = "vs:"
 )
 
 // State holds account balances and nonces in LevelDB.
@@ -49,6 +52,10 @@ func balanceKey(addr crypto.Address) []byte {
 
 func nonceKey(addr crypto.Address) []byte {
 	return append([]byte(prefixNonce), addr[:]...)
+}
+
+func validatorStakeKey(addr crypto.Address) []byte {
+	return append([]byte(prefixValidator), addr[:]...)
 }
 
 // GetBalance returns balance for address (0 if not found).
@@ -102,8 +109,15 @@ func setNonce(batch *leveldb.Batch, addr crypto.Address, nonce uint64) {
 	batch.Put(key, buf)
 }
 
-// ApplyGenesis applies genesis allocation. Call once when initializing chain.
-func (s *State) ApplyGenesis(allocation config.GenesisAllocation) error {
+func setValidatorStake(batch *leveldb.Batch, addr crypto.Address, stake uint64) {
+	key := validatorStakeKey(addr)
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, stake)
+	batch.Put(key, buf)
+}
+
+// ApplyGenesis applies genesis allocation and optional validator set.
+func (s *State) ApplyGenesis(allocation config.GenesisAllocation, validators []config.ValidatorGenesis) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	batch := new(leveldb.Batch)
@@ -117,15 +131,111 @@ func (s *State) ApplyGenesis(allocation config.GenesisAllocation) error {
 		setBalance(batch, addr, amount)
 		setNonce(batch, addr, 0)
 	}
+	if len(validators) > 0 {
+		var addrs []string
+		for _, v := range validators {
+			b, err := hex.DecodeString(v.Address)
+			if err != nil || len(b) != crypto.AddressSize || v.Stake < s.cfg.MinStake {
+				continue
+			}
+			var addr crypto.Address
+			copy(addr[:], b)
+			setValidatorStake(batch, addr, v.Stake)
+			addrs = append(addrs, v.Address)
+		}
+		if len(addrs) > 0 {
+			list, _ := json.Marshal(addrs)
+			batch.Put([]byte(keyValidatorList), list)
+		}
+	}
 	return s.db.Write(batch, nil)
 }
 
-// ApplyBlock applies all transactions in the block and updates state.
-// Caller must have verified block and txs.
+// Validator is address + stake (for GetValidatorSet).
+type Validator struct {
+	Address crypto.Address
+	Stake   uint64
+}
+
+// GetValidatorSet returns the ordered validator set from state.
+func (s *State) GetValidatorSet() ([]Validator, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	val, err := s.db.Get([]byte(keyValidatorList), nil)
+	if err == leveldb.ErrNotFound || len(val) == 0 {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var addrs []string
+	if err := json.Unmarshal(val, &addrs); err != nil {
+		return nil, err
+	}
+	var out []Validator
+	for _, a := range addrs {
+		b, err := hex.DecodeString(a)
+		if err != nil || len(b) != crypto.AddressSize {
+			continue
+		}
+		var addr crypto.Address
+		copy(addr[:], b)
+		stake, _ := s.getValidatorStakeLocked(addr)
+		if stake > 0 {
+			out = append(out, Validator{Address: addr, Stake: stake})
+		}
+	}
+	return out, nil
+}
+
+func (s *State) getValidatorStakeLocked(addr crypto.Address) (uint64, error) {
+	val, err := s.db.Get(validatorStakeKey(addr), nil)
+	if err == leveldb.ErrNotFound {
+		return 0, nil
+	}
+	if err != nil || len(val) < 8 {
+		return 0, err
+	}
+	return binary.BigEndian.Uint64(val), nil
+}
+
+// SlashValidator sets stake to 0 and removes from validator list.
+func (s *State) SlashValidator(addr crypto.Address) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	listVal, err := s.db.Get([]byte(keyValidatorList), nil)
+	if err == leveldb.ErrNotFound {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var addrs []string
+	if err := json.Unmarshal(listVal, &addrs); err != nil {
+		return err
+	}
+	addrHex := addr.Hex()
+	var newList []string
+	for _, a := range addrs {
+		if a != addrHex {
+			newList = append(newList, a)
+		}
+	}
+	batch := new(leveldb.Batch)
+	setValidatorStake(batch, addr, 0)
+	if len(newList) > 0 {
+		data, _ := json.Marshal(newList)
+		batch.Put([]byte(keyValidatorList), data)
+	} else {
+		batch.Delete([]byte(keyValidatorList))
+	}
+	return s.db.Write(batch, nil)
+}
+
+// ApplyBlock applies all transactions and distributes fees to block producer.
 func (s *State) ApplyBlock(b *core.Block) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Load current balances/nonces for all involved addresses
 	balances := make(map[crypto.Address]uint64)
 	nonces := make(map[crypto.Address]uint64)
 	for i := range b.Transactions {
@@ -141,16 +251,21 @@ func (s *State) ApplyBlock(b *core.Block) error {
 			balances[tx.To] = bal
 		}
 	}
-	// Apply txs in order
+	var totalFees uint64
 	for i := range b.Transactions {
 		tx := &b.Transactions[i]
 		total := tx.Amount + tx.Fee
+		totalFees += tx.Fee
 		if balances[tx.From] < total {
-			continue // skip invalid
+			continue
 		}
 		balances[tx.From] -= total
 		nonces[tx.From]++
 		balances[tx.To] += tx.Amount
+	}
+	if totalFees > 0 {
+		bal, _ := s.getBalanceLocked(b.ValidatorAddress)
+		balances[b.ValidatorAddress] = bal + totalFees
 	}
 	batch := new(leveldb.Batch)
 	for addr, bal := range balances {
@@ -184,11 +299,10 @@ func (s *State) getNonceLocked(addr crypto.Address) (uint64, error) {
 	return binary.BigEndian.Uint64(val), nil
 }
 
-// ResetAndReplay clears state, applies genesis, then applies blocks in order (for reorg).
-func (s *State) ResetAndReplay(allocation config.GenesisAllocation, blocks []*core.Block) error {
+// ResetAndReplay clears state, applies genesis (with validators), then applies blocks (for reorg).
+func (s *State) ResetAndReplay(allocation config.GenesisAllocation, validators []config.ValidatorGenesis, blocks []*core.Block) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Clear all balance/nonce keys by iterating (LevelDB has no clear; we iterate and delete)
 	iter := s.db.NewIterator(nil, nil)
 	batch := new(leveldb.Batch)
 	for iter.Next() {
@@ -198,7 +312,7 @@ func (s *State) ResetAndReplay(allocation config.GenesisAllocation, blocks []*co
 	if err := s.db.Write(batch, nil); err != nil {
 		return err
 	}
-	if err := s.applyGenesisLocked(allocation); err != nil {
+	if err := s.applyGenesisLocked(allocation, validators); err != nil {
 		return err
 	}
 	for _, b := range blocks {
@@ -209,7 +323,7 @@ func (s *State) ResetAndReplay(allocation config.GenesisAllocation, blocks []*co
 	return nil
 }
 
-func (s *State) applyGenesisLocked(allocation config.GenesisAllocation) error {
+func (s *State) applyGenesisLocked(allocation config.GenesisAllocation, validators []config.ValidatorGenesis) error {
 	batch := new(leveldb.Batch)
 	for addrHex, amount := range allocation {
 		b, err := hex.DecodeString(addrHex)
@@ -220,6 +334,23 @@ func (s *State) applyGenesisLocked(allocation config.GenesisAllocation) error {
 		copy(addr[:], b)
 		setBalance(batch, addr, amount)
 		setNonce(batch, addr, 0)
+	}
+	if len(validators) > 0 {
+		var addrs []string
+		for _, v := range validators {
+			b, err := hex.DecodeString(v.Address)
+			if err != nil || len(b) != crypto.AddressSize || v.Stake < s.cfg.MinStake {
+				continue
+			}
+			var addr crypto.Address
+			copy(addr[:], b)
+			setValidatorStake(batch, addr, v.Stake)
+			addrs = append(addrs, v.Address)
+		}
+		if len(addrs) > 0 {
+			list, _ := json.Marshal(addrs)
+			batch.Put([]byte(keyValidatorList), list)
+		}
 	}
 	return s.db.Write(batch, nil)
 }
@@ -240,15 +371,21 @@ func (s *State) applyBlockLocked(b *core.Block) error {
 			balances[tx.To] = bal
 		}
 	}
+	var totalFees uint64
 	for i := range b.Transactions {
 		tx := &b.Transactions[i]
 		total := tx.Amount + tx.Fee
+		totalFees += tx.Fee
 		if balances[tx.From] < total {
 			continue
 		}
 		balances[tx.From] -= total
 		nonces[tx.From]++
 		balances[tx.To] += tx.Amount
+	}
+	if totalFees > 0 {
+		bal, _ := s.getBalanceLocked(b.ValidatorAddress)
+		balances[b.ValidatorAddress] = bal + totalFees
 	}
 	batch := new(leveldb.Batch)
 	for addr, bal := range balances {

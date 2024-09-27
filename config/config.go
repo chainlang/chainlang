@@ -15,16 +15,27 @@ const MaxBlockSize = 1_000_000
 // BlockTimeTargetSeconds is target block interval (3–5 seconds).
 const BlockTimeTargetSeconds = 4
 
+// MinStake is minimum HTC to be a validator (e.g. 5M HTC).
+const MinStake = 5_000_000 * 1_000_000
+
 // GenesisAllocation defines initial balances (address -> amount in smallest units).
 type GenesisAllocation map[string]uint64
 
+// ValidatorGenesis is one validator in genesis (address hex, stake in smallest units).
+type ValidatorGenesis struct {
+	Address string `json:"address"`
+	Stake   uint64 `json:"stake"`
+}
+
 // ChainConfig holds chain and genesis parameters.
 type ChainConfig struct {
-	TotalSupply  uint64
-	Decimals     uint8
-	MinFee       uint64
-	MaxBlockSize int
-	Genesis      GenesisAllocation
+	TotalSupply       uint64
+	Decimals          uint8
+	MinFee            uint64
+	MinStake          uint64
+	MaxBlockSize      int
+	Genesis           GenesisAllocation
+	GenesisValidators []ValidatorGenesis `json:"genesis_validators,omitempty"`
 }
 
 // P2PConfig holds network parameters.
@@ -57,11 +68,13 @@ func DefaultChainConfig() *ChainConfig {
 		TotalSupply:  TotalSupply,
 		Decimals:     Decimals,
 		MinFee:       MinFee,
+		MinStake:     MinStake,
 		MaxBlockSize: MaxBlockSize,
 		Genesis: GenesisAllocation{
 			TreasuryAddrHex:     10_000_000_000 * 1_000_000, // 10B HTC
 			StakingAddrHex:      5_000_000_000 * 1_000_000,  // 5B HTC
 			DistributionAddrHex: 6_000_000_000 * 1_000_000,  // 6B HTC
 		},
+		GenesisValidators: nil, // set when initializing for PoS
 	}
 }
