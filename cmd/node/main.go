@@ -425,6 +425,89 @@ func runNodeLoop(dataDir, p2pListen string, seeds []string) error {
 			"nonce":   nonce,
 		})
 	})
+	// Block explorer: GET /blocks?limit=20 (last N blocks), GET /block?height=N or ?hash=HEX
+	http.HandleFunc("/blocks", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		limit := 20
+		if l := r.URL.Query().Get("limit"); l != "" {
+			fmt.Sscanf(l, "%d", &limit)
+			if limit <= 0 || limit > 100 {
+				limit = 20
+			}
+		}
+		last, _ := chain.LastBlock()
+		if last == nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode([]*core.Block{})
+			return
+		}
+		from := uint64(0)
+		if last.Height >= uint64(limit) {
+			from = last.Height - uint64(limit) + 1
+		}
+		blocks, _ := chain.GetBlocksFrom(from, limit)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(blocks)
+	})
+	http.HandleFunc("/block", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if h := r.URL.Query().Get("hash"); h != "" {
+			hash := crypto.HashFromHex(h)
+			b, err := chain.GetBlock(hash)
+			if err != nil {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(b)
+			return
+		}
+		if he := r.URL.Query().Get("height"); he != "" {
+			var height uint64
+			if _, err := fmt.Sscanf(he, "%d", &height); err != nil {
+				http.Error(w, "invalid height", http.StatusBadRequest)
+				return
+			}
+			b, err := chain.GetBlockByHeight(height)
+			if err != nil {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(b)
+			return
+		}
+		http.Error(w, "need ?hash= or ?height=", http.StatusBadRequest)
+	})
+	// Metrics: peers, height, mempool, block time (time since last block)
+	http.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		last, _ := chain.LastBlock()
+		height := uint64(0)
+		blockTimeSec := float64(0)
+		if last != nil {
+			height = last.Height
+			if last.Timestamp > 0 {
+				blockTimeSec = time.Since(time.Unix(last.Timestamp, 0)).Seconds()
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"height":       height,
+			"mempool":      pool.Size(),
+			"peers":        peerSet.PeerCount(),
+			"block_time_s": blockTimeSec,
+		})
+	})
 
 	go func() {
 		log.Println("API listening on :8080")
