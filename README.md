@@ -335,6 +335,7 @@ Hanticoin Core is **experimental software**. Use at your own risk. Running a nod
 | [docs/SPEC.md](docs/SPEC.md) | Chain spec: params, block/tx, crypto, consensus |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, algorithms, mechanisms |
 | [docs/TESTNET.md](docs/TESTNET.md) | Testnet runbook, loadgen, limitations |
+| [docs/TWO_NODE_SYNC.md](docs/TWO_NODE_SYNC.md) | Two-node sync: step-by-step usage and testing |
 | [docs/MAINNET.md](docs/MAINNET.md) | Mainnet prep, validator guide, node ops |
 | [docs/SECURITY.md](docs/SECURITY.md) | Security checklist and recommendations |
 | [docs/WHITEPAPER.md](docs/WHITEPAPER.md) | Academic-style protocol specification |

@@ -42,6 +42,7 @@ func main() {
 	sendNonce := flag.Uint64("send-nonce", 0, "Send: nonce (0 = fetch from API)")
 	p2pListen := flag.String("p2p-listen", ":3030", "P2P listen address")
 	p2pSeeds := flag.String("p2p-seeds", "", "P2P seed peers (comma-separated)")
+	apiPort := flag.String("api-port", "8080", "HTTP API listen port (for multi-node on one machine use e.g. 8081)")
 	flag.Parse()
 
 	if *keygen != "" {
@@ -72,7 +73,7 @@ func main() {
 	}
 	if *runNode {
 		seeds := strings.FieldsFunc(*p2pSeeds, func(r rune) bool { return r == ',' })
-		if err := runNodeLoop(*dataDir, *p2pListen, seeds); err != nil {
+		if err := runNodeLoop(*dataDir, *p2pListen, seeds, *apiPort); err != nil {
 			log.Fatalf("run: %v", err)
 		}
 		return
@@ -129,7 +130,7 @@ func runInit(dataDir string) error {
 	return nil
 }
 
-func runNodeLoop(dataDir, p2pListen string, seeds []string) error {
+func runNodeLoop(dataDir, p2pListen string, seeds []string, apiPort string) error {
 	cfg := config.DefaultChainConfig()
 	chain, err := core.NewChain(dataDir, cfg)
 	if err != nil {
@@ -517,8 +518,9 @@ func runNodeLoop(dataDir, p2pListen string, seeds []string) error {
 	})
 
 	go func() {
-		log.Println("API listening on :8080")
-		if err := http.ListenAndServe(":8080", nil); err != nil {
+		addr := ":" + apiPort
+		log.Println("API listening on", addr)
+		if err := http.ListenAndServe(addr, nil); err != nil {
 			log.Printf("API: %v", err)
 		}
 	}()
