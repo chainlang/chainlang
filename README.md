@@ -1,68 +1,76 @@
-# Hanticoin Core
+# Hanticoin
 
-**A standalone Proof-of-Stake Layer-1 blockchain optimized for fast, low-fee payments.**
+**High-Performance Proof-of-Stake Layer-1 Blockchain for Fast, Low-Fee Payments in Somalia.**
 
-Hanticoin Core is a minimal blockchain protocol for deterministic value transfer. It uses an account-based state model, validator-based Proof-of-Stake consensus with round-robin block production, and a fixed supply. It does not support smart contracts. The implementation prioritizes simplicity, security, and predictable performance.
-
----
-
-## 1. Project Title and Tagline
-
-- **Project name:** Hanticoin Core  
-- **Tagline:** High-performance Proof-of-Stake Layer-1 blockchain for fast, low-fee payments.  
-- **Technical summary:** Account-based chain with 21B HTC fixed supply, 6 decimal precision, ~4 s block time, round-robin validator selection, and P2P sync. Built for payment settlement without general-purpose computation.
+Hanticoin Core is the reference implementation of the Hanticoin protocol — a minimal, account-based blockchain designed exclusively for secure and deterministic value transfer. It does not support smart contracts and does not attempt to be a general computing platform.
 
 ---
 
-## 2. Overview
+## Why Hanticoin
 
-Hanticoin is a **dedicated payment blockchain** with the following design:
+Blockchain technology began with Bitcoin: the first decentralized digital monetary system. Bitcoin introduced a new model of trust where monetary supply is transparent, rules are fixed, and no single authority controls issuance. Its primary purpose was monetary integrity — to eliminate uncontrolled money creation and restore trust in digital value transfer.
+
+Hanticoin builds on that foundation but focuses specifically on **payment infrastructure for Somalia**.
+
+Digital payments are already dominant in Somalia. However, most existing systems are centralized, opaque, and institution-dependent. Users cannot independently verify:
+
+- Total digital supply
+- Reserve backing
+- Issuance policy
+- Settlement integrity
+
+If a digital monetary system does not have transparent supply or verifiable backing, users must rely entirely on institutional trust. Hanticoin replaces institutional trust with **cryptographic certainty**.
+
+### The Somalia Opportunity
+
+Somalia has high mobile payment adoption, strong remittance inflows, limited traditional banking infrastructure, and a digital-first population. This creates a unique opportunity for a purpose-built settlement blockchain.
+
+Unlike general-purpose platforms, Hanticoin is optimized exclusively for value transfer. This reduces complexity, improves security, and increases performance predictability.
+
+---
+
+## What Is Hanticoin
+
+Hanticoin is a **standalone Layer-1 Proof-of-Stake blockchain** designed for fast, low-fee digital payments. By limiting scope to payments only, the protocol minimizes attack surface, reduces operational risk, and enables predictable performance.
 
 | Property | Value |
-|----------|--------|
+|---|---|
 | Consensus | Proof-of-Stake (validator-based, round-robin) |
 | Block time | 3–5 s (target 4 s) |
-| Finality | 1–2 blocks (longest-chain; no BFT voting) |
-| Total supply | 21,000,000,000 HTC (fixed) |
+| Finality | 1–2 blocks (longest-chain) |
+| Total supply | 21,000,000,000 HTC (fixed — hard invariant) |
 | Precision | 6 decimals (1 HTC = 10⁶ smallest units) |
 | State model | Account-based (balance, nonce) |
 | Smart contracts | Not supported |
+| Validator rewards | Transaction fees only — no inflation beyond genesis |
 
-**Purpose:** Reliable, low-latency payment settlement with minimal fees and a clear monetary invariant.
+The protocol enforces a hard monetary invariant: **total supply cannot exceed 21 billion HTC**.
 
-**Design principles:**
+### What the Protocol Guarantees
 
-- **Simplicity** — No smart contracts; transfer-only transactions and deterministic state.
-- **Speed** — Short block interval and low confirmation depth.
-- **Stability** — Fixed supply, fee-only validator rewards, slashing for equivocation.
-
-**Target use:** Payment networks (e.g. Somalia and similar markets) where fast, low-cost transfers and predictable economics are priorities.
+- Transparent and publicly verifiable total supply
+- Immutable transaction history
+- Deterministic state execution
+- Cryptographic ownership
+- Supermajority finality via stake-based validator accountability
+- No central authority can inflate supply beyond protocol rules
 
 ---
 
-## 3. Features
+## Features
 
 - **Account-based model** — Balances and nonces per address; no UTXO set.
-- **Validator-based consensus** — Ordered validator set; block producer = round-robin by height.
-- **Deterministic state machine** — Same block sequence yields same state on all nodes.
-- **Low-latency block production** — Target 4 s block time; single-leader per round.
-- **Minimal transaction fees** — Configurable minimum fee (e.g. 100 smallest units); fees go to block producer.
+- **Validator-based consensus** — Ordered validator set; block producer selected round-robin by height.
+- **Deterministic state machine** — Same block sequence yields the same state on all nodes.
+- **Low-latency block production** — Target 4 s block time; single leader per round.
+- **Minimal transaction fees** — Configurable minimum fee (e.g. 100 smallest units); fees go to the block producer.
 - **Fixed monetary supply** — 21B HTC at genesis; no minting.
-- **Modular architecture** — Separate packages for core, consensus, P2P, state, mempool, crypto, config.
+- **Slashing for equivocation** — Double-signing results in full stake loss and removal from the validator set.
+- **Modular architecture** — Separate packages for core, consensus, P2P, state, mempool, crypto, and config.
 
 ---
 
-## 4. Architecture
-
-Components and data flow:
-
-- **Core** — Block and transaction types, chain storage (blocks by hash, tip metadata), genesis, Merkle and hash verification.
-- **Consensus** — Validator set (from genesis/state), round-robin leader for height, block producer verification.
-- **State** — Account balances and nonces, validator set and stakes; `ApplyGenesis`, `ApplyBlock` (incl. fee to producer), `SlashValidator`, `ResetAndReplay` for reorgs.
-- **Mempool** — Pending transactions; validation on add; feed for block building.
-- **P2P** — TCP transport, newline-delimited JSON messages, peer set, gossip (NewTx, NewBlock), sync (GetBlocks/Blocks).
-- **Crypto** — ECDSA P-256, SHA256, Merkle tree, address derivation, key file I/O.
-- **Config** — Chain and P2P parameters (supply, decimals, min fee, min stake, block time, listen addr, seeds).
+## Architecture
 
 ```
                     +---------------------+
@@ -75,21 +83,31 @@ Components and data flow:
           |                    |                     |
           |           +--------v--------+             |
           +----------->   Core (chain)  <------------+
-                     +--------+--------+
-                              |
-                     +--------v--------+
-                     |  State (LevelDB)|
-                     +----------------+
+                      +--------+--------+
+                               |
+                      +--------v--------+
+                      |  State (LevelDB)|
+                      +----------------+
 ```
+
+| Component | Responsibility |
+|---|---|
+| **Core** | Block and transaction types, chain storage (blocks by hash, tip metadata), genesis, Merkle and hash verification |
+| **Consensus** | Validator set (from genesis/state), round-robin leader selection by height, block producer verification |
+| **State** | Account balances and nonces, validator set and stakes; `ApplyGenesis`, `ApplyBlock` (incl. fee to producer), `SlashValidator`, `ResetAndReplay` for reorgs |
+| **Mempool** | Pending transactions; validation on add; feed for block building |
+| **P2P** | TCP transport, newline-delimited JSON messages, peer set, gossip (NewTx, NewBlock), sync (GetBlocks/Blocks) |
+| **Crypto** | ECDSA P-256, SHA256, Merkle tree, address derivation, key file I/O |
+| **Config** | Chain and P2P parameters (supply, decimals, min fee, min stake, block time, listen addr, seeds) |
 
 ---
 
-## 5. Repository Structure
+## Repository Structure
 
 ```
 hanticoin/
 ├── cmd/
-│   ├── node/       # Node binary: init, run, keygen, send, init-join
+│   ├── node/        # Node binary: init, run, keygen, send, init-join
 │   └── loadgen/     # Stress-test: POST /tx in loop, report TPS
 ├── core/            # Block, transaction, chain storage, genesis
 ├── consensus/       # Validator set, ValidatorForHeight, VerifyBlockValidator
@@ -106,26 +124,13 @@ hanticoin/
 └── README.md
 ```
 
-| Directory | Contents |
-|-----------|----------|
-| `cmd/node` | Entrypoint: `-init`, `-run`, `-init-join`, `-keygen`, `-send-*` |
-| `cmd/loadgen` | Load generator for testnet |
-| `core` | Block/transaction types, chain, genesis |
-| `consensus` | PoS: validator set, round-robin leader |
-| `p2p` | Networking, messages, peers |
-| `state` | Account and validator state |
-| `mempool` | Transaction pool |
-| `crypto` | Signatures, hashing, Merkle, keys |
-| `config` | Chain and P2P configuration |
-| `docs` | Technical documentation |
-
 ---
 
-## 6. Installation
+## Installation
 
 **Requirements**
 
-- Go 1.21 or later  
+- Go 1.21 or later
 - Linux or macOS (Windows may work but is not regularly tested)
 
 **Clone and build**
@@ -142,11 +147,11 @@ Optional (stress-test tool):
 go build -o loadgen ./cmd/loadgen
 ```
 
-**Output:** The `hanticoin` binary supports init, run, keygen, send, and init-join. No separate daemon binary.
+The `hanticoin` binary supports `init`, `run`, `keygen`, `send`, and `init-join`. No separate daemon binary is needed.
 
 ---
 
-## 7. Running a Node
+## Running a Node
 
 **First node (bootstrap)**
 
@@ -155,63 +160,61 @@ go build -o loadgen ./cmd/loadgen
 ./hanticoin -run -data-dir=./data
 ```
 
-- `-init` creates the data directory, generates a validator key, writes genesis (with this node as sole validator), applies genesis to state, and appends the genesis block.  
+- `-init` creates the data directory, generates a validator key, writes genesis (with this node as sole validator), applies genesis to state, and appends the genesis block.
 - `-run` starts the node: P2P server, HTTP API, block production when this node is the validator for the next height, and sync when receiving blocks from peers.
 
-**Second node (join same chain)**
+**Second node (join existing chain)**
 
 ```bash
 ./hanticoin -init-join=./data -data-dir=./data2
 ./hanticoin -run -data-dir=./data2 -p2p-listen=127.0.0.1:3031 -p2p-seeds=127.0.0.1:3030
 ```
 
-- `-init-join` copies genesis from the first node’s data dir and creates a new key (this node is not in the validator set unless genesis is edited).  
+- `-init-join` copies genesis from the first node's data directory and creates a new key (this node is not in the validator set unless genesis is edited).
 - `-run` with `-p2p-seeds` connects to the first node and syncs from height 1.
 
-**Validator vs full node**
+**Validator vs. full node**
 
-- **Validator:** A node whose key is in the genesis validator set. When `-run` is used, it produces a block at height \(r\) if it is the round-robin leader for \(r\) (no separate “validator mode” flag).  
-- **Full node:** Any node running `-run`; it may or may not be in the validator set. Non-validators sync and relay only.
+- **Validator:** A node whose key is in the genesis validator set. It produces a block at height *r* if it is the round-robin leader for *r*. No separate "validator mode" flag is needed.
+- **Full node:** Any node running `-run` that is not in the validator set. Non-validators sync and relay only.
 
-**Ports**
+**Default ports**
 
-- P2P: default `:3030` (override with `-p2p-listen`).  
-- HTTP API: default `:8080` (see code for override).
+| Service | Default |
+|---|---|
+| P2P | `:3030` (override with `-p2p-listen`) |
+| HTTP API | `:8080` |
 
-**Logging**
-
-- Logs go to stdout/stderr. No built-in log rotation; use the OS or a process manager.
+Logs go to stdout/stderr. No built-in log rotation — use the OS or a process manager.
 
 ---
 
-## 8. Configuration
+## Configuration
 
-Parameters are defined in `config` (defaults in code) and in **genesis** (written at init). There is no separate config file by default; node behavior is controlled by flags and genesis.
+Parameters are defined in the `config` package (defaults in code) and in **genesis** (written at init). There is no separate config file; node behavior is controlled by flags and genesis.
 
-**Chain parameters (config)**
+**Chain parameters**
 
-| Parameter | Default | Meaning |
-|-----------|---------|---------|
-| TotalSupply | 21B × 10⁶ | Total supply in smallest units |
-| Decimals | 6 | 1 HTC = 10⁶ units |
-| MinFee | 100 | Minimum fee per tx (smallest units) |
-| MinStake | 5M × 10⁶ | Minimum stake to be validator (5M HTC) |
-| MaxBlockSize | 1_000_000 | Approx. max block size (bytes) |
-| BlockTimeTargetSeconds | 4 | Target block interval |
+| Parameter | Default | Description |
+|---|---|---|
+| `TotalSupply` | 21B × 10⁶ | Total supply in smallest units |
+| `Decimals` | 6 | 1 HTC = 10⁶ units |
+| `MinFee` | 100 | Minimum fee per tx (smallest units) |
+| `MinStake` | 5M × 10⁶ | Minimum stake to be a validator (5M HTC) |
+| `MaxBlockSize` | 1,000,000 | Approximate max block size (bytes) |
+| `BlockTimeTargetSeconds` | 4 | Target block interval |
 
-**P2P (flags)**
+**P2P flags**
 
-| Flag | Default | Meaning |
-|------|--------|--------|
+| Flag | Default | Description |
+|---|---|---|
 | `-data-dir` | `./data` | Data directory (genesis, state, chain) |
 | `-p2p-listen` | `:3030` | P2P listen address |
 | `-p2p-seeds` | (none) | Comma-separated seed peers |
 
-**Genesis**
+Genesis is stored under the data directory (e.g. `./data/genesis.json`). All nodes on the same network must use the same genesis file.
 
-- Stored under the data directory (e.g. `./data/genesis.json`). Contains genesis block, allocation (address → balance), and validator set (address, stake). All nodes on the same network must use the same genesis.
-
-**Example: custom data dir and seeds**
+**Example: custom data directory and seeds**
 
 ```bash
 ./hanticoin -run -data-dir=/var/lib/hanticoin -p2p-listen=0.0.0.0:3030 -p2p-seeds=seed1.example.com:3030,seed2.example.com:3030
@@ -219,92 +222,9 @@ Parameters are defined in `config` (defaults in code) and in **genesis** (writte
 
 ---
 
-## 9. Development
+## Quick Reference
 
-**Tests**
-
-```bash
-go test ./...
-```
-
-**Format**
-
-```bash
-go fmt ./...
-```
-
-**Linting**
-
-```bash
-golangci-lint run
-```
-
-(Install with `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest` if needed.)
-
-**Contribution**
-
-- Open an issue or PR on the repository.  
-- Follow existing style (format, naming).  
-- Add or update tests for behavior changes.
-
-**Branches**
-
-- `main`: stable, release-ready.  
-- Feature branches as needed; merge after review.
-
-**Versioning**
-
-- Semantic versioning (e.g. v1.0.0) for releases when adopted.
-
----
-
-## 10. Security Model
-
-**Slashing**
-
-- **Equivocation (double-signing):** If a validator produces two different blocks at the same height, any node that observes both slashes that validator: stake set to zero and validator removed from the set.  
-- **Penalty:** Full stake loss (\(\alpha = 1\)); no partial slash in the base design.
-
-**Validator responsibilities**
-
-- Keep private key secure.  
-- Produce at most one block per height; do not sign conflicting blocks.  
-- Run a correct, up-to-date node and follow fork-choice (longest chain by height).
-
-**Upgrades**
-
-- Protocol or parameter changes (e.g. new genesis, new validator set) require coordination and, for mainnet, a clear upgrade process (see [docs/MAINNET.md](docs/MAINNET.md)).
-
-**Vulnerability reporting**
-
-- Report security issues privately (e.g. to a listed security contact or maintainer). Do not disclose in public issues before a fix or advisory is agreed.
-
----
-
-## 11. Roadmap
-
-- **Testnet** — Public or invited testnet; bootstrap script and loadgen available ([docs/TESTNET.md](docs/TESTNET.md)).  
-- **Audit** — Independent security review before mainnet ([docs/SECURITY.md](docs/SECURITY.md)).  
-- **Mainnet** — Launch with audited code, documented parameters and genesis ([docs/MAINNET.md](docs/MAINNET.md)).  
-- **Decentralization** — Expand validator set and geographic distribution over time.
-
----
-
-## 12. License
-
-This project is licensed under the **MIT License**. See [LICENSE](LICENSE) for the full text.
-
----
-
-## 13. Disclaimer
-
-Hanticoin Core is **experimental software**. Use at your own risk. Running a node or validator may involve operational and financial risk. The authors and contributors do not guarantee correctness, availability, or fitness for any particular purpose and are not liable for any loss or damage arising from use of this software. This is not financial or legal advice.
-
----
-
-## Quick reference
-
-**Create key and send HTC (node running)**
+**Generate a key and send HTC**
 
 ```bash
 ./hanticoin -keygen=./mykey.json
@@ -314,29 +234,112 @@ Hanticoin Core is **experimental software**. Use at your own risk. Running a nod
 **HTTP API**
 
 | Endpoint | Description |
-|----------|-------------|
-| `POST /tx` | Submit transaction |
-| `GET /status` | Chain height, mempool size |
+|---|---|
+| `POST /tx` | Submit a transaction |
+| `GET /status` | Chain height and mempool size |
 | `GET /account?address=<hex>` | Balance and nonce |
 | `GET /blocks?limit=20` | Last N blocks |
-| `GET /block?height=N` or `?hash=HEX` | One block |
-| `GET /metrics` | height, mempool, peers, block_time_s |
+| `GET /block?height=N` or `?hash=HEX` | Single block |
+| `GET /metrics` | Height, mempool, peers, block_time_s |
 
 **Testnet**
 
-- Bootstrap script: `./scripts/testnet-bootstrap.sh`  
-- Loadgen: `./loadgen -api=http://localhost:8080 -key=./path/to/validator_key.json -total=2000 -c=10`  
-- Full runbook: [docs/TESTNET.md](docs/TESTNET.md)
+```bash
+# Bootstrap
+./scripts/testnet-bootstrap.sh
 
-**Documentation**
+# Load generator
+./loadgen -api=http://localhost:8080 -key=./path/to/validator_key.json -total=2000 -c=10
+```
 
-| Doc | Description |
-|-----|-------------|
+Full testnet runbook: [docs/TESTNET.md](docs/TESTNET.md)
+
+---
+
+## Development
+
+```bash
+# Run all tests
+go test ./...
+
+# Format code
+go fmt ./...
+
+# Lint (install golangci-lint if needed)
+golangci-lint run
+```
+
+**Contributing**
+
+- Open an issue or pull request on the repository.
+- Follow existing style (format, naming conventions).
+- Add or update tests for any behavior changes.
+
+**Branches**
+
+- `main` — stable, release-ready.
+- Feature branches as needed; merge after review.
+
+**Versioning**
+
+Semantic versioning (e.g. `v1.0.0`) for releases.
+
+---
+
+## Security Model
+
+**Slashing**
+
+If a validator produces two different blocks at the same height (equivocation / double-signing), any node that observes both blocks slashes that validator: stake is set to zero and the validator is removed from the set. The penalty is a full stake loss — no partial slash in the base design.
+
+**Validator responsibilities**
+
+- Keep the private key secure.
+- Produce at most one block per height; never sign conflicting blocks.
+- Run a correct, up-to-date node and follow fork-choice (longest chain by height).
+
+**Protocol upgrades**
+
+Parameter or consensus changes require network-wide coordination. For mainnet, a clear upgrade process is documented in [docs/MAINNET.md](docs/MAINNET.md).
+
+**Vulnerability reporting**
+
+Report security issues privately to a listed maintainer or security contact. Do not disclose publicly before a fix or advisory is agreed upon.
+
+---
+
+## Roadmap
+
+| Phase | Status | Details |
+|---|---|---|
+| Testnet | Available | Bootstrap script and load generator ready — see [docs/TESTNET.md](docs/TESTNET.md) |
+| Security Audit | Planned | Independent review before mainnet — see [docs/SECURITY.md](docs/SECURITY.md) |
+| Mainnet | Planned | Audited code, documented parameters and genesis — see [docs/MAINNET.md](docs/MAINNET.md) |
+| Validator Decentralization | Future | Expand validator set and geographic distribution over time |
+
+---
+
+## Documentation
+
+| Document | Description |
+|---|---|
 | [docs/SPEC.md](docs/SPEC.md) | Chain spec: params, block/tx, crypto, consensus |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, algorithms, mechanisms |
-| [docs/TESTNET.md](docs/TESTNET.md) | Testnet runbook, loadgen, limitations |
+| [docs/TESTNET.md](docs/TESTNET.md) | Testnet runbook, load generator, limitations |
 | [docs/TWO_NODE_SYNC.md](docs/TWO_NODE_SYNC.md) | Two-node sync: step-by-step usage and testing |
 | [docs/MAINNET.md](docs/MAINNET.md) | Mainnet prep, validator guide, node ops |
 | [docs/SECURITY.md](docs/SECURITY.md) | Security checklist and recommendations |
 | [docs/WHITEPAPER.md](docs/WHITEPAPER.md) | Academic-style protocol specification |
 | [docs/CONSENSUS_MODEL.md](docs/CONSENSUS_MODEL.md) | Formal consensus model |
+
+---
+
+## License
+
+This project is licensed under the **MIT License**. See [LICENSE](LICENSE) for the full text.
+
+---
+
+## Disclaimer
+
+Hanticoin Core is **experimental software**. Use at your own risk. Running a node or validator involves operational and financial risk. The authors and contributors do not guarantee correctness, availability, or fitness for any particular purpose, and are not liable for any loss or damage arising from use of this software. This is not financial or legal advice.
