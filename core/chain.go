@@ -71,17 +71,27 @@ func (c *Chain) Save() error {
 // AppendBlock persists a block and updates chain metadata.
 func (c *Chain) AppendBlock(b *Block) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	path := filepath.Join(c.dir, blocksDir, b.Hash.Hex()+".json")
-	data, err := json.MarshalIndent(b, "", "  ")
+	blocksPath := filepath.Join(c.dir, blocksDir)
+	fileName := b.Hash.Hex() + ".json"
+	path := filepath.Join(blocksPath, fileName)
+	data, err := json.Marshal(b)
 	if err != nil {
+		c.mu.Unlock()
 		return err
 	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	tmpPath := filepath.Join(blocksPath, ".tmp."+fileName)
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		c.mu.Unlock()
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		c.mu.Unlock()
 		return err
 	}
 	c.Height = b.Height
 	c.LastHash = b.Hash
+	c.mu.Unlock()
 	return c.Save()
 }
 

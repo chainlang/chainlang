@@ -82,10 +82,11 @@ func main() {
 }
 
 func runInit(dataDir string) error {
+	fmt.Fprintln(os.Stderr, "Creating data directory...")
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return err
 	}
-	// Generate and save validator key
+	fmt.Fprintln(os.Stderr, "Generating validator key...")
 	priv, err := crypto.GenerateKey()
 	if err != nil {
 		return err
@@ -94,11 +95,13 @@ func runInit(dataDir string) error {
 	if err := crypto.SaveKey(filepath.Join(dataDir, validatorKeyFile), priv); err != nil {
 		return err
 	}
+	fmt.Fprintln(os.Stderr, "Writing genesis...")
 	cfg := config.DefaultChainConfig()
 	genesisValidators := []config.ValidatorGenesis{{Address: validatorAddr.Hex(), Stake: config.MinStake}}
 	if err := core.WriteGenesisFile(dataDir, cfg, validatorAddr, genesisValidators); err != nil {
 		return err
 	}
+	fmt.Fprintln(os.Stderr, "Opening state database...")
 	st, err := state.Open(filepath.Join(dataDir, stateDir), cfg)
 	if err != nil {
 		return err
@@ -108,17 +111,21 @@ func runInit(dataDir string) error {
 	if err != nil {
 		return err
 	}
+	fmt.Fprintln(os.Stderr, "Applying genesis (allocation + validators)...")
 	if err := st.ApplyGenesis(allocation, validators); err != nil {
 		return err
 	}
+	fmt.Fprintln(os.Stderr, "Opening chain storage...")
 	chain, err := core.NewChain(dataDir, cfg)
 	if err != nil {
 		return err
 	}
+	fmt.Fprintln(os.Stderr, "Writing genesis block to chain...")
 	genesis := core.GenesisBlock(validatorAddr)
 	if err := chain.AppendBlock(genesis); err != nil {
 		return err
 	}
+	fmt.Fprintln(os.Stderr, "Initialization complete.")
 	return nil
 }
 
